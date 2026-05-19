@@ -2,8 +2,12 @@ import model.Ticket;
 import model.TicketStatus;
 import service.TicketManager;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+
 public class TestTicketManager {
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) throws Exception {
         TicketManager manager = new TicketManager();
 
         System.out.println("=== Create tickets ===");
@@ -69,6 +73,22 @@ public class TestTicketManager {
 
         for (Ticket t : manager.getAllTickets()) {
             System.out.println(t);
+        }
+
+        System.out.println("\n=== Log output ===");
+
+        Path logPath = Path.of("system.log");
+
+        if (Files.exists(logPath)) {
+            List<String> logLines = Files.readAllLines(logPath);
+
+            int start = Math.max(0, logLines.size() - 20);
+
+            for (int i = start; i < logLines.size(); i++) {
+                System.out.println(logLines.get(i));
+            }
+        } else {
+            System.out.println("No system.log file found.");
         }
     }
 }
