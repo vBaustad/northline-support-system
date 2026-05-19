@@ -1,5 +1,6 @@
 package service;
 
+import logging.SystemLogger;
 import model.Ticket;
 import model.TicketStatus;
 import util.IdGenerator;
@@ -17,12 +18,21 @@ public class TicketManager {
     
     private final Map<Integer, Ticket> tickets = new LinkedHashMap<>();
 
+    // Delt singleton-logger brukt av alle tråder
+    private final SystemLogger logger = SystemLogger.getInstance();
+
     // synchronized sørger for at flere klienttråder
     // ikke kan opprette tickets samtidig på en usikker måte
     public synchronized Ticket createTicket(String description){
 
         // Validerer input for å unngå ugyldige tickets
         if(description == null || description.isBlank()){
+
+            logger.error(
+                "CREATE",
+                "Failed to create ticket because description was invalid"
+            );
+
             return null;
         }  
 
@@ -34,6 +44,12 @@ public class TicketManager {
 
         // Legger ticket inn i delt datastruktur
         tickets.put(id, ticket);
+
+        logger.info(
+            "CREATE",
+            "ticketId=" + id +
+            " description=\"" + description + "\""
+        );
 
         // Vekker eventuelle tråder som venter på nye tickets
         notifyAll();
@@ -47,12 +63,34 @@ public class TicketManager {
         Ticket ticket = tickets.get(ticketId);
 
         // Ticket eksisterer ikke
-        if (ticket == null) return false;
+        if (ticket == null){
+
+            logger.error(
+                "CANCEL",
+                "Failed to cancel because ticketId=" + ticketId + " does not exist"
+            );
+
+            return false;
+        }
 
         // Kun NEW tickets kan kanselleres
-        if (ticket.getStatus() != TicketStatus.NEW) return false;
+        if (ticket.getStatus() != TicketStatus.NEW){
+            
+            logger.error(
+                "CANCEL",
+                "Failed to cancel ticketId=" + ticketId +
+                " because status was " + ticket.getStatus()
+            );
+
+            return false;
+        }
 
         ticket.cancel();
+
+        logger.info(
+            "CANCEL",
+            "ticketId=" + ticketId
+        );
 
         return true;
     }
@@ -60,16 +98,38 @@ public class TicketManager {
     // Tildeler neste tilgjengelige NEW-ticket til agent
     public synchronized Ticket assignNextTicket(String agentName) {
         // Hindrer ugyldig agentnavn
-        if (agentName == null || agentName.isBlank()) return null;
+        if (agentName == null || agentName.isBlank()){
+            
+            logger.error(
+                "ASSIGN",
+                "Failed to assign ticket because agent name was invalid"
+            );
+
+            return null;
+        }
 
         // Finner første ticket som fortsatt er NEW
         Ticket ticket = findFirstNewTicket();
 
         // Ingen tilgjengelige tickets
-        if (ticket == null) return null;
+        if (ticket == null){
+            
+            logger.info(
+                "ASSIGN",
+                "No available NEW tickets for agent=" + agentName
+            );
+
+            return null;
+        }
 
         // Ticket blir nå eksklusivt tildelt agent
         ticket.assignTo(agentName);
+
+        logger.info(
+            "ASSIGN",
+            "ticketId=" + ticket.getId() +
+            " agent=" + agentName
+        );
 
         return ticket;
     }
@@ -82,19 +142,59 @@ public class TicketManager {
     */
     public synchronized boolean completeTicket(int ticketId, String agentName) {
 
-        if (agentName == null || agentName.isBlank()) return false;
+        if (agentName == null || agentName.isBlank()){
+            
+            logger.error(
+                "COMPLETE",
+                "Failed to complete ticket because agent name was invalid"
+            );
+
+            return false;
+        }
 
         Ticket ticket = tickets.get(ticketId);
 
-        if (ticket == null) return false;
+        if (ticket == null){
+            
+            logger.error(
+                "COMPLETE",
+                "Failed to complete because ticketId=" + ticketId + " does not exist"
+            );
+
+            return false;
+        }
 
         // Kun ASSIGNED tickets kan fullføres
-        if (ticket.getStatus() != TicketStatus.ASSIGNED) return false;
+        if (ticket.getStatus() != TicketStatus.ASSIGNED){
+            
+            logger.error(
+                "COMPLETE",
+                "Failed to complete ticketId=" + ticketId +
+                " because status was " + ticket.getStatus()
+            );
+
+            return false;
+        }
 
         // Kun agenten som eier ticketen kan fullføre den
-        if (!agentName.equals(ticket.getAssignedAgent())) return false;
+        if (!agentName.equals(ticket.getAssignedAgent())){
+            
+            logger.error(
+                "COMPLETE",
+                "Failed to complete ticketId=" + ticketId +
+                " because wrong agent attempted completion"
+            );
+
+            return false;
+        }
 
         ticket.complete();
+
+        logger.info(
+            "COMPLETE",
+            "ticketId=" + ticketId +
+            " agent=" + agentName
+        );
 
         return true;
     }
