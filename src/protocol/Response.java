@@ -36,6 +36,12 @@ public class Response implements Serializable{
         this.tickets = tickets;
     }
 
+    // Praktisk constructor for responses som kun returnerer
+    // én ticket og ikke en liste med tickets
+    public Response(ResponseType type, String message, Ticket ticket){
+        this(type, message, ticket, null);
+    }
+
     public ResponseType getType(){
         return type;
     }
