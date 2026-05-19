@@ -2,9 +2,9 @@ package server;
 
 import model.Ticket;
 import protocol.Request;
+import protocol.RequestType;
 import protocol.Response;
 import protocol.ResponseType;
-import protocol.RequestType;
 import service.TicketManager;
 
 import java.io.ObjectInputStream;
@@ -31,20 +31,51 @@ public class ClientHandler implements Runnable {
                 ObjectOutputStream output = new ObjectOutputStream(socket.getOutputStream());
                 ObjectInputStream input = new ObjectInputStream(socket.getInputStream())
         ) {
+
             while (true) {
-                Request request = (Request) input.readObject();
+
+                // Leser objekt fra klient
+                Object receivedObject = input.readObject();
+
+                // Beskytter protokollen mot ugyldige objekter
+                if (!(receivedObject instanceof Request)) {
+
+                    System.out.println("Protocol error: Object is not a Request");
+
+                    output.writeObject(
+                            new Response(
+                                    ResponseType.ERROR,
+                                    "Invalid request object",
+                                    null
+                            )
+                    );
+
+                    output.flush();
+                    continue;
+                }
+
+                Request request = (Request) receivedObject;
+
                 Response response = handleRequest(request);
 
                 output.writeObject(response);
                 output.flush();
             }
+
         } catch (Exception e) {
+
+            // Logger tilkoblingsfeil / disconnect
             System.out.println("Client disconnected.");
         }
     }
 
     private Response handleRequest(Request request) {
+
+        // Validerer request før behandling
         if (request == null) {
+
+            System.out.println("Protocol error: request is null");
+
             return new Response(
                     ResponseType.ERROR,
                     "Invalid request",
@@ -54,9 +85,38 @@ public class ClientHandler implements Runnable {
 
         RequestType type = request.getType();
 
+        // Hindrer NullPointerException i switch(type)
+        if (type == null) {
+
+            System.out.println("Protocol error: request type is null");
+
+            return new Response(
+                    ResponseType.ERROR,
+                    "Invalid request type",
+                    null
+            );
+        }
+
         switch (type) {
+
             case CREATE_TICKET:
-                Ticket created = manager.createTicket(request.getDescription());
+
+                // Oppretter ticket via TicketManager
+                Ticket created = manager.createTicket(
+                        request.getDescription()
+                );
+
+                // Håndterer mulig null-retur
+                if (created == null) {
+
+                    System.out.println("Failed to create ticket");
+
+                    return new Response(
+                            ResponseType.ERROR,
+                            "Unable to create ticket",
+                            null
+                    );
+                }
 
                 return new Response(
                         ResponseType.SUCCESS,
@@ -65,9 +125,13 @@ public class ClientHandler implements Runnable {
                 );
 
             case CANCEL_TICKET:
-                boolean cancelled = manager.cancelTicket(request.getTicketId());
+
+                boolean cancelled = manager.cancelTicket(
+                        request.getTicketId()
+                );
 
                 if (cancelled) {
+
                     return new Response(
                             ResponseType.SUCCESS,
                             "Ticket cancelled",
@@ -82,9 +146,13 @@ public class ClientHandler implements Runnable {
                 );
 
             case FETCH_NEXT_TICKET:
-                Ticket assigned = manager.assignNextTicket(request.getActorName());
+
+                Ticket assigned = manager.assignNextTicket(
+                        request.getActorName()
+                );
 
                 if (assigned == null) {
+
                     return new Response(
                             ResponseType.ERROR,
                             "No available tickets",
@@ -99,12 +167,14 @@ public class ClientHandler implements Runnable {
                 );
 
             case COMPLETE_TICKET:
+
                 boolean completed = manager.completeTicket(
                         request.getTicketId(),
                         request.getActorName()
                 );
 
                 if (completed) {
+
                     return new Response(
                             ResponseType.SUCCESS,
                             "Ticket completed",
@@ -119,6 +189,10 @@ public class ClientHandler implements Runnable {
                 );
 
             default:
+
+                // Logger ukjent request-type
+                System.out.println("Protocol error: unknown request type");
+
                 return new Response(
                         ResponseType.ERROR,
                         "Unknown request type",
