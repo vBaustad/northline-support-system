@@ -1,13 +1,28 @@
 package server;
 
+import logging.SystemLogger;
 import service.TicketManager;
 
 import java.net.ServerSocket;
 import java.net.Socket;
 
+/*
+ * Main-klassen for serveren.
+ *
+ * Denne klassen:
+ * - starter serveren
+ * - venter på klienter
+ * - oppretter ClientHandler for hver klient
+ * - starter hver klient i egen thread
+ */
 public class ServerMain {
 
+    // Porten serveren kjører på
     private static final int PORT = 5000;
+
+    // Global logger
+    private static final SystemLogger logger =
+            SystemLogger.getInstance();
 
     public static void main(String[] args) {
 
@@ -16,37 +31,46 @@ public class ServerMain {
          *
          * Kun TicketManager får lov
          * til å endre ticket-state.
+         *
+         * Alle klienter deler samme manager.
          */
         TicketManager manager =
                 new TicketManager();
 
-        try (ServerSocket serverSocket =
-                     new ServerSocket(PORT)) {
+        try (
+                // Oppretter server socket på valgt port
+                ServerSocket serverSocket =
+                        new ServerSocket(PORT)
+        ) {
 
-            System.out.println(
-                    "Server started on port "
-                    + PORT
+            // Logger at serveren har startet
+            logger.info(
+                    "SERVER_START",
+                    "Server started on port " + PORT
             );
 
             /*
-             * Serveren kjører bestandig 
+             * Serveren kjører hele tiden
              * og aksepterer nye klienter.
              */
             while (true) {
 
                 /*
-                 * Venter på klient til å koble
+                 * Venter til en client kobler til.
                  */
                 Socket clientSocket =
                         serverSocket.accept();
 
-                System.out.println(
-                        "Client connected: "
-                        + clientSocket.getInetAddress()
+                // Logger ny tilkobling
+                logger.info(
+                        "CLIENT_CONNECT",
+                        "Client connected from "
+                                + clientSocket.getInetAddress()
                 );
 
                 /*
-                 * Én ClientHandler per klient
+                 * Oppretter én ClientHandler
+                 * for hver klient.
                  */
                 ClientHandler handler =
                         new ClientHandler(
@@ -56,22 +80,28 @@ public class ServerMain {
 
                 /*
                  * Hver klient kjører
-                 * i egen tråd
+                 * i sin egen thread.
+                 *
+                 * Dette gjør at flere klienter
+                 * kan bruke serveren samtidig.
                  */
                 Thread clientThread =
                         new Thread(handler);
 
+                // Starter klient-thread
                 clientThread.start();
             }
 
         } catch (Exception e) {
 
-            System.out.println(
-                    "Server error: "
-                    + e.getMessage()
+            /*
+             * Logger serverfeil
+             * med feilmelding.
+             */
+            logger.error(
+                    "SERVER_ERROR",
+                    "Server error: " + e.getMessage()
             );
-
-            e.printStackTrace();
         }
     }
 }
