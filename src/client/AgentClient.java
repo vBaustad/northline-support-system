@@ -11,6 +11,8 @@ import java.io.ObjectOutputStream;
 import java.net.Socket;
 import java.util.Scanner;
 
+import model.Ticket;
+
 public class AgentClient {
 
     // Serveradresse og port klienten kobler til
@@ -86,7 +88,14 @@ public class AgentClient {
         printResponse(response);
 
         if (response.getType() == ResponseType.SUCCESS && response.getTicket() != null) {
-            System.out.println("Assigned: " + response.getTicket());
+            Ticket assigned = response.getTicket();
+
+            System.out.println(
+                "You have been assigned ticket #" +
+                assigned.getId() +
+                ": " +
+                assigned.getDescription()
+            );
         }
     }
 
