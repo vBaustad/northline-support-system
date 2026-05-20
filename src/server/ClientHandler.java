@@ -1,10 +1,12 @@
 package server;
 
+import logging.SystemLogger;
 import model.Ticket;
 import protocol.Request;
 import protocol.RequestType;
 import protocol.Response;
 import protocol.ResponseType;
+import protocol.Role;
 import service.TicketManager;
 
 import java.io.ObjectInputStream;
@@ -12,35 +14,75 @@ import java.io.ObjectOutputStream;
 import java.net.Socket;
 
 /*
- * ClientHandler skal ikke endre tickets direkte.
- * Det er kun TicketManager som eier shared state.
+ * Denne klassen håndterer én client.
+ *
+ * Hver client kjører i sin egen thread.
+ *
+ * ClientHandler endrer ikke tickets direkte.
+ * Alle endringer skjer gjennom TicketManager.
  */
 public class ClientHandler implements Runnable {
 
+    // vi lager forbinelsen mellom clint og server
     private final Socket socket;
+
+    // Manager har ansvar for å håndtere tickets
     private final TicketManager manager;
 
+    // Logger som skriver hendelser til system.log
+    private final SystemLogger logger = SystemLogger.getInstance();
+
+    /*
+     * Constructor
+     *
+     * Lagrer socket og manager når ClientHandler opprettes.
+     */
     public ClientHandler(Socket socket, TicketManager manager) {
         this.socket = socket;
         this.manager = manager;
     }
 
+    /*
+     * Kjøres når threaden starter.
+     *
+     * 
+     * -  server motta request fra client
+     * -  og validere request
+     * -  til slutt sende response tilbake til client
+     */
+
+
     @Override
     public void run() {
         try (
-                ObjectOutputStream output = new ObjectOutputStream(socket.getOutputStream());
-                ObjectInputStream input = new ObjectInputStream(socket.getInputStream())
+                // Brukes for å sende objekter til client
+                ObjectOutputStream output =
+                        new ObjectOutputStream(socket.getOutputStream());
+
+
+                // Brukes for å lese objekter fra client
+                ObjectInputStream input =
+                        new ObjectInputStream(socket.getInputStream())
         ) {
 
+            /*
+             * server venter for client
+             * .
+             */
             while (true) {
 
-                // Leser objekt fra klient
+                // Leser objekt sendt fra client
                 Object receivedObject = input.readObject();
 
-                // Beskytter protokollen mot ugyldige objekter
+                /*
+                 *  her Sjekker at objektet faktisk er en Request.
+                 */
                 if (!(receivedObject instanceof Request)) {
 
-                    System.out.println("Protocol error: Object is not a Request");
+                    logger.error(
+                            "REQUEST_VALIDATION_ERROR",
+                            "Object is not a Request"
+                    );
 
                     output.writeObject(
                             new Response(
@@ -54,27 +96,57 @@ public class ClientHandler implements Runnable {
                     continue;
                 }
 
+                /*
+                 * Siden vi vet at objektet er en Request,
+                 * kan vi caste det trygt.
+                 */
                 Request request = (Request) receivedObject;
 
+                // Behandler request og lager response
                 Response response = handleRequest(request);
 
+                // Sender response tilbake til client
                 output.writeObject(response);
+
+                // Sørger for at response sendes med en gang
                 output.flush();
             }
 
         } catch (Exception e) {
 
-            // Logger tilkoblingsfeil / disconnect
-            System.out.println("Client disconnected.");
+            /*
+             * Hvis client kobler fra eller en nettverksfeil skjer,
+             * logges også årsaken til feilen.
+             */
+            logger.error(
+                    "DISCONNECT",
+                    "Client disconnected from "
+                            + socket.getRemoteSocketAddress()
+                            + " reason=" + e.getMessage()
+            );
         }
     }
 
+    /*
+     * Validerer og utfører request.
+     *
+     * Basert på request-type bestemmer metoden om den skal:
+     * - opprette ticket
+     * - kansellere ticket
+     * - hente neste ticket
+     * - fullføre ticket
+     */
     private Response handleRequest(Request request) {
 
-        // Validerer request før behandling
+        /*
+         * her sjekker at request ikke er null.
+         */
         if (request == null) {
 
-            System.out.println("Protocol error: request is null");
+            logger.error(
+                    "REQUEST_VALIDATION_ERROR",
+                    "request is null"
+            );
 
             return new Response(
                     ResponseType.ERROR,
@@ -83,12 +155,19 @@ public class ClientHandler implements Runnable {
             );
         }
 
+        // Henter request-typen
         RequestType type = request.getType();
 
-        // Hindrer NullPointerException i switch(type)
+        /*
+         * Hvis type er null,
+         * kan ikke switch fungere trygt.
+         */
         if (type == null) {
 
-            System.out.println("Protocol error: request type is null");
+            logger.error(
+                    "REQUEST_VALIDATION_ERROR",
+                    "request type is null"
+            );
 
             return new Response(
                     ResponseType.ERROR,
@@ -97,19 +176,67 @@ public class ClientHandler implements Runnable {
             );
         }
 
+        // Henter rollen til client
+        // siden registrar har ansvar for create og cancel
+        //  og agent har ansvar for fetch og complete
+
+        Role role = request.getRole();
+
+        /*
+         * Hvis role mangler,
+         * kan ikke serveren sjekke tilgang.
+         */
+        if (role == null) {
+
+            logger.error(
+                    "ROLE_VALIDATION_ERROR",
+                    "role is null for request type=" + type
+            );
+
+            return new Response(
+                    ResponseType.ERROR,
+                    "Missing role",
+                    null
+            );
+        }
+
+        /*
+         * Bestemmer hvilken operasjon som skal utføres
+         * basert på request type.
+         */
         switch (type) {
 
+            /*
+             * Oppretter en ny ticket.
+             *
+             * Kun REGISTRAR har lov til dette.
+             */
             case CREATE_TICKET:
 
-                // Oppretter ticket via TicketManager
+                if (role != Role.REGISTRAR) {
+
+                    logger.error(
+                            "ROLE_VALIDATION_ERROR",
+                            "CREATE_TICKET denied for role=" + role
+                    );
+
+                    return new Response(
+                            ResponseType.ERROR,
+                            "Only REGISTRAR can create tickets",
+                            null
+                    );
+                }
+
                 Ticket created = manager.createTicket(
                         request.getDescription()
                 );
 
-                // Håndterer mulig null-retur
                 if (created == null) {
 
-                    System.out.println("Failed to create ticket");
+                    logger.error(
+                            "CREATE",
+                            "Failed to create ticket"
+                    );
 
                     return new Response(
                             ResponseType.ERROR,
@@ -118,19 +245,52 @@ public class ClientHandler implements Runnable {
                     );
                 }
 
+                logger.info(
+                        "CREATE",
+                        "Ticket created by actor="
+                                + request.getActorName()
+                );
+
                 return new Response(
                         ResponseType.SUCCESS,
                         "Ticket created",
                         created
                 );
 
+            /*
+             * Kansellerer en ticket.
+             *
+             * Kun REGISTRAR har lov til dette.
+             */
             case CANCEL_TICKET:
+
+                if (role != Role.REGISTRAR) {
+
+                    logger.error(
+                            "ROLE_VALIDATION_ERROR",
+                            "CANCEL_TICKET denied for role=" + role
+                    );
+
+                    return new Response(
+                            ResponseType.ERROR,
+                            "Only REGISTRAR can cancel tickets",
+                            null
+                    );
+                }
 
                 boolean cancelled = manager.cancelTicket(
                         request.getTicketId()
                 );
 
                 if (cancelled) {
+
+                    logger.info(
+                            "CANCEL",
+                            "Ticket cancelled id="
+                                    + request.getTicketId()
+                                    + " actor="
+                                    + request.getActorName()
+                    );
 
                     return new Response(
                             ResponseType.SUCCESS,
@@ -139,19 +299,52 @@ public class ClientHandler implements Runnable {
                     );
                 }
 
+                logger.error(
+                        "CANCEL",
+                        "Unable to cancel ticket id="
+                                + request.getTicketId()
+                                + " actor="
+                                + request.getActorName()
+                );
+
                 return new Response(
                         ResponseType.ERROR,
                         "Unable to cancel ticket",
                         null
                 );
 
+            /*
+             * Henter neste tilgjengelige ticket.
+             *
+             * Kun AGENT har lov til dette.
+             */
             case FETCH_NEXT_TICKET:
+
+                if (role != Role.AGENT) {
+
+                    logger.error(
+                            "ROLE_VALIDATION_ERROR",
+                            "FETCH_NEXT_TICKET denied for role=" + role
+                    );
+
+                    return new Response(
+                            ResponseType.ERROR,
+                            "Only AGENT can fetch tickets",
+                            null
+                    );
+                }
 
                 Ticket assigned = manager.assignNextTicket(
                         request.getActorName()
                 );
 
                 if (assigned == null) {
+
+                    logger.error(
+                            "ASSIGN",
+                            "No available tickets for actor="
+                                    + request.getActorName()
+                    );
 
                     return new Response(
                             ResponseType.ERROR,
@@ -160,13 +353,38 @@ public class ClientHandler implements Runnable {
                     );
                 }
 
+                logger.info(
+                        "ASSIGN",
+                        "Ticket assigned to actor="
+                                + request.getActorName()
+                );
+
                 return new Response(
                         ResponseType.SUCCESS,
                         "Ticket assigned",
                         assigned
                 );
 
+            /*
+             * Fullfører en ticket.
+             *
+             * Kun AGENT har lov til dette.
+             */
             case COMPLETE_TICKET:
+
+                if (role != Role.AGENT) {
+
+                    logger.error(
+                            "ROLE_VALIDATION_ERROR",
+                            "COMPLETE_TICKET denied for role=" + role
+                    );
+
+                    return new Response(
+                            ResponseType.ERROR,
+                            "Only AGENT can complete tickets",
+                            null
+                    );
+                }
 
                 boolean completed = manager.completeTicket(
                         request.getTicketId(),
@@ -175,6 +393,14 @@ public class ClientHandler implements Runnable {
 
                 if (completed) {
 
+                    logger.info(
+                            "COMPLETE",
+                            "Ticket completed id="
+                                    + request.getTicketId()
+                                    + " actor="
+                                    + request.getActorName()
+                    );
+
                     return new Response(
                             ResponseType.SUCCESS,
                             "Ticket completed",
@@ -182,16 +408,29 @@ public class ClientHandler implements Runnable {
                     );
                 }
 
+                logger.error(
+                        "COMPLETE",
+                        "Unable to complete ticket id="
+                                + request.getTicketId()
+                                + " actor="
+                                + request.getActorName()
+                );
+
                 return new Response(
                         ResponseType.ERROR,
                         "Unable to complete ticket",
                         null
                 );
 
+            /*
+             * Hvis request type er ukjent.
+             */
             default:
 
-                // Logger ukjent request-type
-                System.out.println("Protocol error: unknown request type");
+                logger.error(
+                        "REQUEST_VALIDATION_ERROR",
+                        "Unknown request type=" + type
+                );
 
                 return new Response(
                         ResponseType.ERROR,
